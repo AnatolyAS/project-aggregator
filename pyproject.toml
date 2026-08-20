@@ -1,0 +1,20 @@
+[project]
+name = "project-aggregator"
+version = "0.1.0"
+description = "Кроссплатформенная утилита для гибкой агрегации файлов проекта в единый результирующий файл. Отличается высокими эстетическими стандартами: содержит современный графический (GUI) и консольный (CLI) интерфейсы. Поддерживает расширенный спектр форматов и альтернативные методы консолидации данных"
+authors = [
+    {name = "SobolevAS",email = "sobolevanatoly123@yandex.ru"}
+]
+readme = "README.md"
+requires-python = ">=3.11,<3.15"
+dependencies = [
+    "typer (>=0.27.1,<0.28.0)",
+    "rich (>=15.0.0,<16.0.0)",
+    "pyside6 (>=6.11.2,<7.0.0)",
+    "pyinstaller (>=6.22.2,<7.0.0)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
