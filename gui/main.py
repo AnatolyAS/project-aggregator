@@ -1,60 +1,36 @@
 import sys
-from PySide6.QtWidgets import QApplication, QMainWindow, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QMainWindow
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
+
+from gui.views.main_view import MainView
 
 
 class MainWindow(QMainWindow):
     """Главное окно графического интерфейса пользователя.
 
-    Реализует эстетичный базовый каркас приложения (GUI). Включает настройку
-    размеров, центрирование контента и применение современных типографических
-    стандартов.
+    Служит контейнером для основного представления (MainView). Отвечает за
+    настройку геометрии окна и общих параметров приложения.
     """
 
     def __init__(self) -> None:
-        """Инициализирует экземпляр главного окна, настраивая его геометрию и стили."""
+        """Инициализирует главное окно и устанавливает MainView как центральный виджет."""
         super().__init__()
         self.setWindowTitle("Project Aggregator")
-        self.resize(900, 600)
-        self.setMinimumSize(600, 400)
+        self.resize(700, 450)
+        self.setMinimumSize(500, 350)
 
-        # Создание центрального виджета и компоновщика
-        central_widget = QWidget(self)
-        self.setCentralWidget(central_widget)
-        
-        layout = QVBoxLayout(central_widget)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        # Приветственная надпись с использованием эстетичной типографики
-        welcome_label = QLabel("Project Aggregator", self)
-        
-        # Настройка шрифта для заголовка
-        font = QFont("Segoe UI", 24)
-        font.setBold(True)
-        welcome_label.setFont(font)
-        welcome_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        
-        # Информационная подпись
-        subtitle_label = QLabel("Утилита для профессиональной консолидации файлов", self)
-        subtitle_font = QFont("Segoe UI", 12)
-        subtitle_label.setFont(subtitle_font)
-        subtitle_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        subtitle_label.setStyleSheet("color: gray;")
-
-        layout.addWidget(welcome_label)
-        layout.addWidget(subtitle_label)
+        # Установка функционального виджета в качестве центрального элемента
+        self.main_view = MainView(self)
+        self.setCentralWidget(self.main_view)
 
 
 def run_gui() -> None:
     """Инициализирует и запускает цикл обработки событий графического интерфейса.
 
-    Создает экземпляр QApplication, применяет базовые системные стили и
-    отображает главное окно приложения. Блокирует выполнение до закрытия окна.
+    Создает экземпляр QApplication, применяет системные стили и отображает
+    главное окно приложения. Блокирует выполнение до закрытия окна.
     """
     app = QApplication(sys.argv)
-    
-    # Принудительное использование современного системного стиля (Fusion)
     app.setStyle("Fusion")
     
     window = MainWindow()
