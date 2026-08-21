@@ -1,0 +1,50 @@
+name: Build and Release
+
+# Конвейер запускается только при пуше тегов, начинающихся с 'v'
+on:
+  push:
+    tags:
+      - 'v*'
+
+# Выдача разрешений конвейеру на создание релиза в репозитории
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build on ${{ matrix.os }}
+    # Матрица сборки: GitHub параллельно запустит 3 сервера с разными ОС
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Извлечение исходного кода (Checkout)
+        uses: actions/checkout@v4
+
+      - name: Настройка среды Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Установка менеджера зависимостей Poetry
+        run: |
+          python -m pip install --upgrade pip
+          pip install poetry
+
+      - name: Установка зависимостей проекта
+        run: poetry install --no-interaction --no-root
+
+      - name: Компиляция бинарного файла (PyInstaller)
+        run: poetry run pyinstaller --onefile --name ProjectAggregator main.py
+
+      - name: Автоматическая публикация файлов в GitHub Releases
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          # Загружаем все варианты имен файлов (с .exe и без) из папки dist/
+          files: dist/ProjectAggregator*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
