@@ -30,7 +30,7 @@ class MainView(QWidget):
         dir_layout.addWidget(self.btn_browse_dir)
         layout.addLayout(dir_layout)
 
-        # 2. Фильтр расширений (НОВОЕ)
+        # 2. Фильтр расширений
         layout.addWidget(QLabel("Фильтр расширений (через запятую, оставьте пустым для всех):", self))
         self.ext_input = QLineEdit(self)
         self.ext_input.setPlaceholderText("Например: py, md, json")
@@ -74,6 +74,25 @@ class MainView(QWidget):
         self.btn_browse_dir.clicked.connect(self._on_browse_dir)
         self.btn_browse_file.clicked.connect(self._on_browse_file)
         self.btn_run.clicked.connect(self._on_run_aggregation)
+        # НОВОЕ: Подключение сигнала смены метода к функции обновления расширения
+        self.method_combo.currentIndexChanged.connect(self._on_method_changed)
+
+    def _on_method_changed(self) -> None:
+        """Автоматически обновляет расширение в пути сохранения при смене метода."""
+        current_path = Path(self.file_input.text())
+        method: ConsolidationMethod = self.method_combo.currentData()
+        
+        ext_map = {
+            ConsolidationMethod.MARKDOWN: ".md",
+            ConsolidationMethod.PLAIN_TEXT: ".txt",
+            ConsolidationMethod.JSON: ".json",
+            ConsolidationMethod.HTML: ".html",
+            ConsolidationMethod.PDF: ".pdf"
+        }
+        
+        # Заменяем суффикс (расширение) файла на соответствующее методу
+        new_path = current_path.with_suffix(ext_map.get(method, ".txt"))
+        self.file_input.setText(str(new_path))
 
     def _on_browse_dir(self) -> None:
         directory = QFileDialog.getExistingDirectory(self, "Выберите директорию проекта")
@@ -95,7 +114,6 @@ class MainView(QWidget):
         output_file = self.file_input.text()
         method: ConsolidationMethod = self.method_combo.currentData()
         
-        # Обработка введенных расширений
         raw_exts = self.ext_input.text().strip()
         allowed_exts = [e.strip() for e in raw_exts.split(',')] if raw_exts else None
 
@@ -115,7 +133,6 @@ class MainView(QWidget):
             result_data = aggregator.aggregate()
             
             out_path = Path(output_file)
-            
             if isinstance(result_data, bytes):
                 out_path.write_bytes(result_data)
             else:

@@ -62,6 +62,17 @@ def aggregate(
 ) -> None:
     """Выполняет процесс агрегации файлов с визуальным сопровождением."""
     
+    # НОВОЕ: Автоматическая корректировка расширения файла по умолчанию
+    if output_file.name == "aggregated_output.md":
+        ext_map = {
+            ConsolidationMethod.MARKDOWN: ".md",
+            ConsolidationMethod.PLAIN_TEXT: ".txt",
+            ConsolidationMethod.JSON: ".json",
+            ConsolidationMethod.HTML: ".html",
+            ConsolidationMethod.PDF: ".pdf"
+        }
+        output_file = output_file.with_suffix(ext_map.get(method, ".md"))
+
     ext_info = f"[info]{', '.join(extensions)}[/info]" if extensions else "[info]Все текстовые[/info]"
     
     welcome_panel = Panel(
@@ -103,13 +114,10 @@ def aggregate(
             console.print(f"[error]Критическая ошибка при агрегации: {e}[/error]")
             raise typer.Exit(code=1)
 
-    # Запись результата в файл с учетом бинарного типа (PDF)
     try:
         if isinstance(aggregated_data, bytes):
-            # Запись бинарных данных (PDF)
             output_file.write_bytes(aggregated_data)
         else:
-            # Запись текстовых данных (Markdown, JSON, HTML и т.д.)
             output_file.write_text(aggregated_data, encoding='utf-8')
             
         success_panel = Panel(
