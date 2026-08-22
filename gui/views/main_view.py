@@ -100,14 +100,24 @@ class MainView(QWidget):
             self.dir_input.setText(directory)
 
     def _on_browse_file(self) -> None:
-        file_path, _ = QFileDialog.getSaveFileName(
-            self, 
-            "Сохранить результат как", 
-            self.file_input.text(),
-            "All Files (*.*);;Markdown (*.md);;Text (*.txt);;JSON (*.json);;HTML (*.html);;PDF (*.pdf)"
-        )
-        if file_path:
-            self.file_input.setText(file_path)
+        """Открывает диалоговое окно для выбора директории сохранения.
+        
+        После выбора папки автоматически подставляет текущее имя файла
+        (с учетом выбранного расширения) к новому пути.
+        """
+        directory = QFileDialog.getExistingDirectory(self, "Выберите папку для сохранения результата")
+        if directory:
+            # Получаем текущее имя файла из текстового поля (например, 'aggregated_output.pdf')
+            current_path = Path(self.file_input.text())
+            current_file_name = current_path.name
+            
+            # На случай, если поле было полностью стерто пользователем
+            if not current_file_name:
+                current_file_name = "aggregated_output.md"
+                
+            # Склеиваем выбранную директорию и имя файла
+            new_full_path = Path(directory) / current_file_name
+            self.file_input.setText(str(new_full_path.resolve()))
 
     def _on_run_aggregation(self) -> None:
         target_dir = self.dir_input.text()
