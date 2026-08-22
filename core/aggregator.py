@@ -204,8 +204,12 @@ class FileAggregator:
         return template.render(project_name=self.target_dir.name, files=file_data)
 
     def _ensure_pdf_font(self) -> Path:
-        font_path = Path("extra_assets") / "Roboto-Regular.ttf"
-        font_path.parent.mkdir(exist_ok=True)
+        """Обеспечивает наличие шрифта с поддержкой кириллицы (UTF-8).
+        Сохраняет шрифт в системную директорию разработки assets/.
+        """
+        font_path = Path("assets") / "Roboto-Regular.ttf"
+        font_path.parent.mkdir(parents=True, exist_ok=True)
+        
         if not font_path.exists():
             font_url = "https://github.com/googlefonts/roboto/raw/main/src/hinted/Roboto-Regular.ttf"
             urllib.request.urlretrieve(font_url, font_path)

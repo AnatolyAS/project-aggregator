@@ -1,19 +1,16 @@
 name: Build and Release
 
-# Конвейер запускается только при пуше тегов, начинающихся с 'v'
 on:
   push:
     tags:
       - 'v*'
 
-# Выдача разрешений конвейеру на создание релиза в репозитории
 permissions:
   contents: write
 
 jobs:
   build-and-release:
     name: Build on ${{ matrix.os }}
-    # Матрица сборки: GitHub параллельно запустит 3 сервера с разными ОС
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -37,14 +34,37 @@ jobs:
       - name: Установка зависимостей проекта
         run: poetry install --no-interaction --no-root
 
-      - name: Компиляция бинарного файла (PyInstaller)
-        run: poetry run pyinstaller --onefile --name ProjectAggregator main.py
+      - name: Компиляция для Windows (с иконкой .ico)
+        if: runner.os == 'Windows'
+        run: |
+          if (Test-Path "assets\app_icon.ico") {
+            poetry run pyinstaller --onefile --windowed --name ProjectAggregator --icon=assets\app_icon.ico main.py
+          } else {
+            poetry run pyinstaller --onefile --windowed --name ProjectAggregator main.py
+          }
+
+      - name: Компиляция для macOS (с иконкой .icns)
+        if: runner.os == 'macOS'
+        run: |
+          if [ -f "assets/app_icon.icns" ]; then
+            poetry run pyinstaller --onefile --windowed --name ProjectAggregator_macOS --icon=assets/app_icon.icns main.py
+          else
+            poetry run pyinstaller --onefile --windowed --name ProjectAggregator_macOS main.py
+          fi
+
+      - name: Компиляция для Linux (с иконкой .png)
+        if: runner.os == 'Linux'
+        run: |
+          if [ -f "assets/app_icon.png" ]; then
+            poetry run pyinstaller --onefile --windowed --name ProjectAggregator_Linux --icon=assets/app_icon.png main.py
+          else
+            poetry run pyinstaller --onefile --windowed --name ProjectAggregator_Linux main.py
+          fi
 
       - name: Автоматическая публикация файлов в GitHub Releases
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          # Загружаем все варианты имен файлов (с .exe и без) из папки dist/
           files: dist/ProjectAggregator*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
