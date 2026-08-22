@@ -5,6 +5,7 @@ from enum import Enum
 from typing import List, Dict, Any, Optional, Union
 
 import pathspec
+import tiktoken
 from jinja2 import Template
 from fpdf import FPDF
 
@@ -21,13 +22,12 @@ class ConsolidationMethod(Enum):
 class FileAggregator:
     """Основной класс ядра для агрегации файлов проекта.
 
-    Обеспечивает кроссплатформенный обход директорий, интеллектуальную фильтрацию
-    и консолидацию данных, включая расширенные форматы вывода (HTML, PDF).
+    Обеспечивает кроссплатформенный обход директорий, интеллектуальную фильтрацию,
+    опциональное сжатие кода и консолидацию данных.
     """
 
     DEFAULT_IGNORE_DIRS = {'.git', '.venv', 'venv', '__pycache__', '.vscode', '.idea', 'extra_assets'}
 
-    # Встроенный шаблон для генерации интерактивного HTML
     HTML_TEMPLATE = """
     <!DOCTYPE html>
     <html lang="ru">
@@ -70,11 +70,22 @@ class FileAggregator:
         target_dir: str | Path, 
         method: ConsolidationMethod = ConsolidationMethod.MARKDOWN,
         ignore_dirs: Optional[set[str]] = None,
-        allowed_extensions: Optional[List[str]] = None
+        allowed_extensions: Optional[List[str]] = None,
+        compress_code: bool = False
     ) -> None:
+        """Инициализирует экземпляр FileAggregator.
+
+        Args:
+            target_dir (str | Path): Путь к целевой директории.
+            method (ConsolidationMethod): Метод форматирования.
+            ignore_dirs (Optional[set[str]]): Пользовательские исключения директорий.
+            allowed_extensions (Optional[List[str]]): Разрешенные расширения.
+            compress_code (bool): Флаг включения безопасного сжатия (удаление пустых строк).
+        """
         self.target_dir = Path(target_dir).resolve()
         self.method = method
         self.ignore_dirs = ignore_dirs if ignore_dirs is not None else self.DEFAULT_IGNORE_DIRS
+        self.compress_code = compress_code
         
         if allowed_extensions:
             self.allowed_extensions = {
@@ -85,6 +96,23 @@ class FileAggregator:
             self.allowed_extensions = None
 
         self.gitignore_spec = self._load_gitignore()
+
+    @staticmethod
+    def count_tokens(text: str, model: str = "gpt-4o") -> int:
+        """Вычисляет количество токенов в тексте для указанной LLM модели.
+
+        Args:
+            text (str): Входной текст для анализа.
+            model (str): Название модели OpenAI (по умолчанию gpt-4o).
+
+        Returns:
+            int: Количество токенов. Возвращает 0 в случае непредвиденной ошибки.
+        """
+        try:
+            encoding = tiktoken.encoding_for_model(model)
+            return len(encoding.encode(text))
+        except Exception:
+            return 0
 
     def _load_gitignore(self) -> Optional[pathspec.PathSpec]:
         gitignore_path = self.target_dir / '.gitignore'
@@ -104,24 +132,22 @@ class FileAggregator:
     def _gather_files(self) -> List[Path]:
         gathered_files = []
         for file_path in self.target_dir.rglob('*'):
-            if not file_path.is_file():
-                continue
-            
+            if not file_path.is_file(): continue
             relative_path = file_path.relative_to(self.target_dir)
-            
-            if any(part in self.ignore_dirs for part in relative_path.parts):
-                continue
-                
-            if self.gitignore_spec and self.gitignore_spec.match_file(relative_path.as_posix()):
-                continue
-                
-            if self.allowed_extensions and file_path.suffix.lower() not in self.allowed_extensions:
-                continue
-                
-            if self._is_text_file(file_path):
-                gathered_files.append(file_path)
-                
+            if any(part in self.ignore_dirs for part in relative_path.parts): continue
+            if self.gitignore_spec and self.gitignore_spec.match_file(relative_path.as_posix()): continue
+            if self.allowed_extensions and file_path.suffix.lower() not in self.allowed_extensions: continue
+            if self._is_text_file(file_path): gathered_files.append(file_path)
         return sorted(gathered_files)
+
+    def _process_content(self, file_path: Path) -> str:
+        """Читает файл и применяет сжатие, если оно включено."""
+        content = file_path.read_text(encoding='utf-8')
+        if self.compress_code:
+            # Оставляем только непустые строки, удаляя пробелы справа
+            lines = [line.rstrip() for line in content.splitlines() if line.strip()]
+            content = "\n".join(lines)
+        return content
 
     def _format_markdown(self, files: List[Path]) -> str:
         output = [f"# Агрегация проекта: {self.target_dir.name}\n"]
@@ -130,7 +156,7 @@ class FileAggregator:
             output.append(f"## Файл: {relative_path}")
             output.append(f"```{file_path.suffix.lstrip('.')}")
             try:
-                output.append(file_path.read_text(encoding='utf-8'))
+                output.append(self._process_content(file_path))
             except Exception as e:
                 output.append(f"[Ошибка чтения файла: {e}]")
             output.append("```\n")
@@ -143,7 +169,7 @@ class FileAggregator:
             relative_path = file_path.relative_to(self.target_dir)
             output.append(f"--- НАЧАЛО ФАЙЛА: {relative_path} ---")
             try:
-                output.append(file_path.read_text(encoding='utf-8'))
+                output.append(self._process_content(file_path))
             except Exception as e:
                 output.append(f"[Ошибка чтения файла: {e}]")
             output.append(f"--- КОНЕЦ ФАЙЛА: {relative_path} ---\n")
@@ -154,7 +180,7 @@ class FileAggregator:
         for file_path in files:
             relative_path = str(file_path.relative_to(self.target_dir))
             try:
-                content = file_path.read_text(encoding='utf-8')
+                content = self._process_content(file_path)
                 status = "success"
             except Exception as e:
                 content = str(e)
@@ -166,65 +192,50 @@ class FileAggregator:
         return json.dumps(data, ensure_ascii=False, indent=4)
 
     def _format_html(self, files: List[Path]) -> str:
-        """Генерирует интерактивный HTML-документ с использованием Jinja2."""
         template = Template(self.HTML_TEMPLATE)
         file_data = []
         for file_path in files:
             relative_path = str(file_path.relative_to(self.target_dir))
             try:
-                content = file_path.read_text(encoding='utf-8')
+                content = self._process_content(file_path)
             except Exception as e:
                 content = f"[Ошибка чтения: {e}]"
             file_data.append({"path": relative_path, "content": content})
-            
         return template.render(project_name=self.target_dir.name, files=file_data)
 
     def _ensure_pdf_font(self) -> Path:
-        """Обеспечивает наличие шрифта с поддержкой кириллицы (UTF-8).
-        Сохраняет шрифт в разрешенную директорию extra_assets/.
-        """
         font_path = Path("extra_assets") / "Roboto-Regular.ttf"
         font_path.parent.mkdir(exist_ok=True)
-        
         if not font_path.exists():
             font_url = "https://github.com/googlefonts/roboto/raw/main/src/hinted/Roboto-Regular.ttf"
             urllib.request.urlretrieve(font_url, font_path)
         return font_path
 
     def _format_pdf(self, files: List[Path]) -> bytes:
-        """Генерирует PDF-документ."""
         font_path = self._ensure_pdf_font()
-        
         pdf = FPDF()
         pdf.add_font("Roboto", "", str(font_path), uni=True)
         pdf.set_auto_page_break(auto=True, margin=15)
         pdf.add_page()
         pdf.set_font("Roboto", size=14)
-        
-        # Заголовок
         pdf.cell(0, 10, f"Проект: {self.target_dir.name}", ln=True, align='C')
         pdf.ln(10)
         
-        # Содержимое
         pdf.set_font("Roboto", size=10)
         for file_path in files:
             relative_path = str(file_path.relative_to(self.target_dir))
             pdf.set_font("Roboto", size=12)
             pdf.cell(0, 10, f"--- {relative_path} ---", ln=True, fill=False)
             pdf.set_font("Roboto", size=8)
-            
             try:
-                content = file_path.read_text(encoding='utf-8')
+                content = self._process_content(file_path)
             except Exception as e:
                 content = f"[Ошибка чтения: {e}]"
-                
             pdf.multi_cell(0, 5, content)
             pdf.ln(5)
-            
         return bytes(pdf.output())
 
     def aggregate(self) -> Union[str, bytes]:
-        """Выполняет процесс агрегации. Возвращает строку или байты (для PDF)."""
         if not self.target_dir.exists() or not self.target_dir.is_dir():
             raise ValueError(f"Директория не найдена: {self.target_dir}")
 
