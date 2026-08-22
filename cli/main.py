@@ -78,6 +78,10 @@ def aggregate(
         }
         output_file = output_file.with_suffix(ext_map.get(method, ".md"))
 
+    # НОВОЕ: Автоматическое добавление суффикса _compressed
+    if compress and not output_file.stem.endswith("_compressed"):
+        output_file = output_file.with_name(f"{output_file.stem}_compressed{output_file.suffix}")
+
     ext_info = f"[info]{', '.join(extensions)}[/info]" if extensions else "[info]Все текстовые[/info]"
     compress_info = "[success]Включено[/success]" if compress else "[warning]Отключено[/warning]"
     
