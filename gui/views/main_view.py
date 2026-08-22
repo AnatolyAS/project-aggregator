@@ -1,8 +1,9 @@
 from pathlib import Path
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-    QLineEdit, QPushButton, QComboBox, QFileDialog, QMessageBox
+    QLineEdit, QPushButton, QComboBox, QFileDialog, QMessageBox, QCheckBox
 )
+from PySide6.QtCore import Qt
 
 from core.aggregator import FileAggregator, ConsolidationMethod
 
@@ -36,12 +37,27 @@ class MainView(QWidget):
         self.ext_input.setPlaceholderText("Например: py, md, json")
         layout.addWidget(self.ext_input)
 
-        # 3. Выбор метода агрегации
-        layout.addWidget(QLabel("Метод форматирования:", self))
+        # 3. Метод форматирования и сжатие (в одном ряду)
+        method_layout = QHBoxLayout()
+        
+        method_vbox = QVBoxLayout()
+        method_vbox.addWidget(QLabel("Метод форматирования:", self))
         self.method_combo = QComboBox(self)
         for method in ConsolidationMethod:
             self.method_combo.addItem(method.value.replace("_", " ").title(), method)
-        layout.addWidget(self.method_combo)
+        method_vbox.addWidget(self.method_combo)
+        
+        compress_vbox = QVBoxLayout()
+        compress_vbox.addWidget(QLabel("Оптимизация для LLM:", self))
+        self.compress_checkbox = QCheckBox("Сжать код (удалить пустые строки)", self)
+        compress_vbox.addWidget(self.compress_checkbox)
+        
+        method_layout.addLayout(method_vbox)
+        method_layout.addSpacing(20)
+        method_layout.addLayout(compress_vbox)
+        method_layout.addStretch()
+        
+        layout.addLayout(method_layout)
 
         # 4. Файл сохранения
         layout.addWidget(QLabel("Файл для сохранения результата:", self))
@@ -74,12 +90,15 @@ class MainView(QWidget):
         self.btn_browse_dir.clicked.connect(self._on_browse_dir)
         self.btn_browse_file.clicked.connect(self._on_browse_file)
         self.btn_run.clicked.connect(self._on_run_aggregation)
-        # НОВОЕ: Подключение сигнала смены метода к функции обновления расширения
         self.method_combo.currentIndexChanged.connect(self._on_method_changed)
 
     def _on_method_changed(self) -> None:
-        """Автоматически обновляет расширение в пути сохранения при смене метода."""
         current_path = Path(self.file_input.text())
+        current_file_name = current_path.name
+        
+        if not current_file_name:
+            current_path = Path("aggregated_output")
+            
         method: ConsolidationMethod = self.method_combo.currentData()
         
         ext_map = {
@@ -90,7 +109,6 @@ class MainView(QWidget):
             ConsolidationMethod.PDF: ".pdf"
         }
         
-        # Заменяем суффикс (расширение) файла на соответствующее методу
         new_path = current_path.with_suffix(ext_map.get(method, ".txt"))
         self.file_input.setText(str(new_path))
 
@@ -100,22 +118,12 @@ class MainView(QWidget):
             self.dir_input.setText(directory)
 
     def _on_browse_file(self) -> None:
-        """Открывает диалоговое окно для выбора директории сохранения.
-        
-        После выбора папки автоматически подставляет текущее имя файла
-        (с учетом выбранного расширения) к новому пути.
-        """
         directory = QFileDialog.getExistingDirectory(self, "Выберите папку для сохранения результата")
         if directory:
-            # Получаем текущее имя файла из текстового поля (например, 'aggregated_output.pdf')
             current_path = Path(self.file_input.text())
             current_file_name = current_path.name
-            
-            # На случай, если поле было полностью стерто пользователем
             if not current_file_name:
                 current_file_name = "aggregated_output.md"
-                
-            # Склеиваем выбранную директорию и имя файла
             new_full_path = Path(directory) / current_file_name
             self.file_input.setText(str(new_full_path.resolve()))
 
@@ -123,6 +131,7 @@ class MainView(QWidget):
         target_dir = self.dir_input.text()
         output_file = self.file_input.text()
         method: ConsolidationMethod = self.method_combo.currentData()
+        compress = self.compress_checkbox.isChecked()
         
         raw_exts = self.ext_input.text().strip()
         allowed_exts = [e.strip() for e in raw_exts.split(',')] if raw_exts else None
@@ -138,20 +147,25 @@ class MainView(QWidget):
             aggregator = FileAggregator(
                 target_dir=target_dir, 
                 method=method,
-                allowed_extensions=allowed_exts
+                allowed_extensions=allowed_exts,
+                compress_code=compress
             )
             result_data = aggregator.aggregate()
             
             out_path = Path(output_file)
+            token_info = ""
+            
             if isinstance(result_data, bytes):
                 out_path.write_bytes(result_data)
             else:
                 out_path.write_text(result_data, encoding='utf-8')
+                tokens = FileAggregator.count_tokens(result_data)
+                token_info = f"\nКоличество токенов (gpt-4o): {tokens:,}"
 
             QMessageBox.information(
                 self, 
                 "Успех", 
-                f"Агрегация успешно завершена!\nФайл сохранен:\n{out_path.resolve()}"
+                f"Агрегация успешно завершена!\nФайл сохранен:\n{out_path.resolve()}\n{token_info}"
             )
         except Exception as e:
             QMessageBox.critical(self, "Критическая ошибка", f"Произошла ошибка при агрегации:\n{str(e)}")

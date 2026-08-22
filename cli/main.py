@@ -57,12 +57,17 @@ def aggregate(
         None,
         "--ext",
         "-e",
-        help="Фильтр по расширениям (например: -e py -e md). Если не указано, собираются все текстовые файлы.",
+        help="Фильтр расширений (например: -e py -e md).",
+    ),
+    compress: bool = typer.Option(
+        False,
+        "--compress",
+        "-c",
+        help="Включить сжатие кода (удаление пустых строк и лишних пробелов).",
     )
 ) -> None:
     """Выполняет процесс агрегации файлов с визуальным сопровождением."""
     
-    # НОВОЕ: Автоматическая корректировка расширения файла по умолчанию
     if output_file.name == "aggregated_output.md":
         ext_map = {
             ConsolidationMethod.MARKDOWN: ".md",
@@ -74,12 +79,14 @@ def aggregate(
         output_file = output_file.with_suffix(ext_map.get(method, ".md"))
 
     ext_info = f"[info]{', '.join(extensions)}[/info]" if extensions else "[info]Все текстовые[/info]"
+    compress_info = "[success]Включено[/success]" if compress else "[warning]Отключено[/warning]"
     
     welcome_panel = Panel(
         f"[bold]Project Aggregator[/bold]\n"
         f"Целевая директория: [info]{target_dir}[/info]\n"
         f"Метод: [info]{method.value}[/info]\n"
-        f"Расширения: {ext_info}",
+        f"Расширения: {ext_info}\n"
+        f"Сжатие кода: {compress_info}",
         border_style="cyan",
         expand=False
     )
@@ -92,7 +99,8 @@ def aggregate(
             target_dir=target_dir,
             method=method,
             ignore_dirs=ignore_dirs,
-            allowed_extensions=extensions
+            allowed_extensions=extensions,
+            compress_code=compress
         )
     except Exception as e:
         console.print(f"[error]Ошибка инициализации: {e}[/error]")
@@ -117,12 +125,15 @@ def aggregate(
     try:
         if isinstance(aggregated_data, bytes):
             output_file.write_bytes(aggregated_data)
+            token_info = ""
         else:
             output_file.write_text(aggregated_data, encoding='utf-8')
+            tokens = FileAggregator.count_tokens(aggregated_data)
+            token_info = f"\nТокенов (gpt-4o): [info]{tokens:,}[/info]"
             
         success_panel = Panel(
             f"Агрегация успешно завершена!\n"
-            f"Файл сохранен: [success]{output_file.resolve()}[/success]",
+            f"Файл сохранен: [success]{output_file.resolve()}[/success]{token_info}",
             border_style="green",
             expand=False
         )
