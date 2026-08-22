@@ -3,6 +3,8 @@ from pathlib import Path
 from enum import Enum
 from typing import List, Dict, Any, Optional
 
+import pathspec
+
 
 class ConsolidationMethod(Enum):
     """Определение доступных методов консолидации данных.
@@ -20,16 +22,17 @@ class ConsolidationMethod(Enum):
 class FileAggregator:
     """Основной класс ядра для агрегации файлов проекта.
 
-    Обеспечивает кроссплатформенный обход директорий, фильтрацию нежелательных
-    папок (включая extra_assets) и бинарных файлов, а также консолидацию
-    текстовых данных с использованием различных методов форматирования.
+    Обеспечивает кроссплатформенный обход директорий, интеллектуальную фильтрацию
+    (базовые директории, .gitignore, расширения файлов), отсев бинарных файлов
+    и консолидацию текстовых данных выбранным методом.
 
     Attributes:
-        DEFAULT_IGNORE_DIRS (set[str]): Набор имен директорий, которые исключаются
-            из обработки по умолчанию.
+        DEFAULT_IGNORE_DIRS (set[str]): Базовый набор исключаемых директорий.
         target_dir (Path): Абсолютный путь к целевой директории.
         method (ConsolidationMethod): Выбранный метод форматирования данных.
         ignore_dirs (set[str]): Итоговый набор имен игнорируемых директорий.
+        allowed_extensions (Optional[set[str]]): Набор разрешенных расширений.
+        gitignore_spec (Optional[pathspec.PathSpec]): Скомпилированные правила .gitignore.
     """
 
     DEFAULT_IGNORE_DIRS = {'.git', '.venv', 'venv', '__pycache__', '.vscode', '.idea', 'extra_assets'}
@@ -38,34 +41,54 @@ class FileAggregator:
         self, 
         target_dir: str | Path, 
         method: ConsolidationMethod = ConsolidationMethod.MARKDOWN,
-        ignore_dirs: Optional[set[str]] = None
+        ignore_dirs: Optional[set[str]] = None,
+        allowed_extensions: Optional[List[str]] = None
     ) -> None:
-        """Инициализирует экземпляр класса FileAggregator.
+        """Инициализирует экземпляр FileAggregator с настройками фильтрации.
 
         Args:
-            target_dir (str | Path): Путь к целевой директории, файлы которой
-                необходимо агрегировать.
-            method (ConsolidationMethod, optional): Выбранный метод форматирования
-                результирующих данных. По умолчанию ConsolidationMethod.MARKDOWN.
-            ignore_dirs (Optional[set[str]], optional): Пользовательский набор имен
-                директорий для исключения из обхода. Если не указан, используется
-                DEFAULT_IGNORE_DIRS.
+            target_dir (str | Path): Путь к целевой директории.
+            method (ConsolidationMethod, optional): Метод форматирования.
+            ignore_dirs (Optional[set[str]], optional): Пользовательские исключения директорий.
+            allowed_extensions (Optional[List[str]], optional): Список разрешенных
+                расширений файлов (например, ['.py', 'md']). Если None, разрешены все.
         """
         self.target_dir = Path(target_dir).resolve()
         self.method = method
         self.ignore_dirs = ignore_dirs if ignore_dirs is not None else self.DEFAULT_IGNORE_DIRS
+        
+        # Нормализация переданных расширений (приведение к виду '.ext' и нижнему регистру)
+        if allowed_extensions:
+            self.allowed_extensions = {
+                ext.lower() if ext.startswith('.') else f'.{ext.lower()}' 
+                for ext in allowed_extensions
+            }
+        else:
+            self.allowed_extensions = None
+
+        self.gitignore_spec = self._load_gitignore()
+
+    def _load_gitignore(self) -> Optional[pathspec.PathSpec]:
+        """Ищет и парсит файл .gitignore в корне целевой директории.
+
+        Returns:
+            Optional[pathspec.PathSpec]: Объект спецификации путей для фильтрации,
+                либо None, если файл .gitignore отсутствует.
+        """
+        gitignore_path = self.target_dir / '.gitignore'
+        if gitignore_path.is_file():
+            with open(gitignore_path, 'r', encoding='utf-8') as f:
+                return pathspec.PathSpec.from_lines('gitwildmatch', f)
+        return None
 
     def _is_text_file(self, file_path: Path) -> bool:
         """Выполняет эвристическую проверку файла на принадлежность к текстовому формату.
 
-        Функция пытается прочитать первые 1024 байта файла, используя кодировку UTF-8.
-        Если возникает ошибка декодирования, файл считается бинарным.
-
         Args:
-            file_path (Path): Абсолютный или относительный путь к проверяемому файлу.
+            file_path (Path): Путь к проверяемому файлу.
 
         Returns:
-            bool: True, если файл успешно прочитан как текст (UTF-8), иначе False.
+            bool: True, если файл успешно прочитан как текст, иначе False.
         """
         try:
             with open(file_path, 'tr', encoding='utf-8') as f:
@@ -75,43 +98,44 @@ class FileAggregator:
             return False
 
     def _gather_files(self) -> List[Path]:
-        """Осуществляет рекурсивный сбор файлов внутри целевой директории.
+        """Осуществляет рекурсивный сбор файлов с каскадной интеллектуальной фильтрацией.
 
-        Обходит файловую систему, пропуская файлы, путь к которым содержит директории
-        из набора ignore_dirs, а также отсеивая бинарные файлы с помощью _is_text_file.
-        Результирующий список сортируется в алфавитном порядке для обеспечения
-        предсказуемости вывода.
+        Процесс отсева:
+        1. Проверка вхождения в базовые игнорируемые директории.
+        2. Проверка по правилам .gitignore (если присутствует).
+        3. Проверка на соответствие разрешенным расширениям (если заданы).
+        4. Проверка на принадлежность к текстовым форматам (исключение бинарников).
 
         Returns:
-            List[Path]: Отсортированный список объектов Path, представляющих
-                обнаруженные текстовые файлы.
+            List[Path]: Отсортированный список валидных текстовых файлов.
         """
         gathered_files = []
         for file_path in self.target_dir.rglob('*'):
             if not file_path.is_file():
                 continue
             
-            # Проверка наличия игнорируемых директорий в пути
-            if any(part in self.ignore_dirs for part in file_path.relative_to(self.target_dir).parts):
+            relative_path = file_path.relative_to(self.target_dir)
+            
+            # 1. Проверка базовых игнорируемых директорий
+            if any(part in self.ignore_dirs for part in relative_path.parts):
                 continue
                 
+            # 2. Проверка по правилам .gitignore (используется POSIX-формат путей)
+            if self.gitignore_spec and self.gitignore_spec.match_file(relative_path.as_posix()):
+                continue
+                
+            # 3. Фильтрация по явно заданным расширениям
+            if self.allowed_extensions and file_path.suffix.lower() not in self.allowed_extensions:
+                continue
+                
+            # 4. Проверка на текстовый формат
             if self._is_text_file(file_path):
                 gathered_files.append(file_path)
                 
         return sorted(gathered_files)
 
     def _format_markdown(self, files: List[Path]) -> str:
-        """Формирует консолидированную строку из файлов в формате Markdown.
-
-        Каждый файл оборачивается в блок кода с указанием расширения для подсветки
-        синтаксиса. В качестве заголовков используется относительный путь к файлу.
-
-        Args:
-            files (List[Path]): Список путей к файлам, подлежащим обработке.
-
-        Returns:
-            str: Агрегированные данные, отформатированные как Markdown-документ.
-        """
+        """Формирует консолидированную строку в формате Markdown."""
         output = [f"# Агрегация проекта: {self.target_dir.name}\n"]
         for file_path in files:
             relative_path = file_path.relative_to(self.target_dir)
@@ -125,17 +149,7 @@ class FileAggregator:
         return "\n".join(output)
 
     def _format_plain_text(self, files: List[Path]) -> str:
-        """Формирует консолидированную строку из файлов в формате простого текста.
-
-        Для визуального разделения файлов используются текстовые границы (разделители)
-        с указанием начала и конца содержимого конкретного файла.
-
-        Args:
-            files (List[Path]): Список путей к файлам, подлежащим обработке.
-
-        Returns:
-            str: Агрегированные данные, отформатированные как простой текст.
-        """
+        """Формирует консолидированную строку в формате простого текста."""
         separator = "=" * 60
         output = [f"ПРОЕКТ: {self.target_dir.name}\n{separator}\n"]
         for file_path in files:
@@ -149,18 +163,7 @@ class FileAggregator:
         return "\n".join(output)
 
     def _format_json(self, files: List[Path]) -> str:
-        """Формирует консолидированную строку из файлов в формате JSON.
-
-        Создает структурированный объект, содержащий имя проекта и список файлов.
-        Для каждого файла указывается его относительный путь, расширение,
-        статус чтения и содержимое (или текст ошибки).
-
-        Args:
-            files (List[Path]): Список путей к файлам, подлежащим обработке.
-
-        Returns:
-            str: Агрегированные данные в виде отформатированной JSON-строки.
-        """
+        """Формирует консолидированную строку в формате JSON."""
         data: Dict[str, Any] = {
             "project_name": self.target_dir.name,
             "files": []
@@ -183,19 +186,7 @@ class FileAggregator:
         return json.dumps(data, ensure_ascii=False, indent=4)
 
     def aggregate(self) -> str:
-        """Выполняет главный процесс агрегации файлов проекта.
-
-        Проверяет существование целевой директории, собирает валидные файлы
-        и применяет выбранный при инициализации метод консолидации данных.
-
-        Returns:
-            str: Итоговая строка, содержащая агрегированные данные всех файлов
-                в выбранном формате.
-
-        Raises:
-            ValueError: Если целевая директория не существует или не является папкой.
-            NotImplementedError: Если выбран неподдерживаемый метод консолидации.
-        """
+        """Выполняет главный процесс агрегации файлов проекта."""
         if not self.target_dir.exists() or not self.target_dir.is_dir():
             raise ValueError(f"Директория не найдена: {self.target_dir}")
 
