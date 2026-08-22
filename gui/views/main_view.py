@@ -85,7 +85,7 @@ class MainView(QWidget):
             self, 
             "Сохранить результат как", 
             self.file_input.text(),
-            "All Files (*.*);;Markdown (*.md);;Text (*.txt);;JSON (*.json)"
+            "All Files (*.*);;Markdown (*.md);;Text (*.txt);;JSON (*.json);;HTML (*.html);;PDF (*.pdf)"
         )
         if file_path:
             self.file_input.setText(file_path)
@@ -115,7 +115,11 @@ class MainView(QWidget):
             result_data = aggregator.aggregate()
             
             out_path = Path(output_file)
-            out_path.write_text(result_data, encoding='utf-8')
+            
+            if isinstance(result_data, bytes):
+                out_path.write_bytes(result_data)
+            else:
+                out_path.write_text(result_data, encoding='utf-8')
 
             QMessageBox.information(
                 self, 

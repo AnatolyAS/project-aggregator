@@ -103,8 +103,15 @@ def aggregate(
             console.print(f"[error]Критическая ошибка при агрегации: {e}[/error]")
             raise typer.Exit(code=1)
 
+    # Запись результата в файл с учетом бинарного типа (PDF)
     try:
-        output_file.write_text(aggregated_data, encoding='utf-8')
+        if isinstance(aggregated_data, bytes):
+            # Запись бинарных данных (PDF)
+            output_file.write_bytes(aggregated_data)
+        else:
+            # Запись текстовых данных (Markdown, JSON, HTML и т.д.)
+            output_file.write_text(aggregated_data, encoding='utf-8')
+            
         success_panel = Panel(
             f"Агрегация успешно завершена!\n"
             f"Файл сохранен: [success]{output_file.resolve()}[/success]",
