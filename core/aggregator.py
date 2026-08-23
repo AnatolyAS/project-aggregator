@@ -1,13 +1,15 @@
-import json
-import urllib.request
 from pathlib import Path
 from enum import Enum
-from typing import List, Dict, Any, Optional, Union
+from typing import List, Optional, Union
 
 import pathspec
 import tiktoken
-from jinja2 import Template
-from fpdf import FPDF
+
+# Импорт независимых обработчиков из утвержденной директории
+from core.format_handlers import (
+    MarkdownHandler, PlainTextHandler, 
+    JSONHandler, HTMLHandler, PDFHandler
+)
 
 
 class ConsolidationMethod(Enum):
@@ -20,50 +22,20 @@ class ConsolidationMethod(Enum):
 
 
 class FileAggregator:
-    """Основной класс ядра для агрегации файлов проекта.
-
-    Обеспечивает кроссплатформенный обход директорий, интеллектуальную фильтрацию,
-    опциональное сжатие кода и консолидацию данных.
+    """Ядро агрегации (Контекст).
+    
+    Обеспечивает обход директорий и маршрутизацию данных в классы-обработчики.
     """
 
-    DEFAULT_IGNORE_DIRS = {'.git', '.venv', 'venv', '__pycache__', '.vscode', '.idea', 'extra_assets'}
+    DEFAULT_IGNORE_DIRS = {'.git', '.venv', 'venv', '__pycache__', '.vscode', '.idea'}
 
-    HTML_TEMPLATE = """
-    <!DOCTYPE html>
-    <html lang="ru">
-    <head>
-        <meta charset="UTF-8">
-        <title>Агрегация проекта: {{ project_name }}</title>
-        <style>
-            body { font-family: 'Segoe UI', sans-serif; margin: 0; display: flex; height: 100vh; background-color: #1e1e1e; color: #d4d4d4; }
-            .sidebar { width: 300px; background-color: #252526; padding: 20px; overflow-y: auto; border-right: 1px solid #333; }
-            .sidebar a { color: #569cd6; text-decoration: none; display: block; margin-bottom: 10px; font-size: 14px; word-break: break-all; }
-            .sidebar a:hover { text-decoration: underline; }
-            .content { flex: 1; padding: 20px; overflow-y: auto; }
-            .file-block { margin-bottom: 40px; background-color: #1e1e1e; border: 1px solid #333; border-radius: 5px; }
-            .file-header { background-color: #2d2d30; padding: 10px 20px; font-weight: bold; border-bottom: 1px solid #333; }
-            pre { margin: 0; padding: 20px; overflow-x: auto; font-family: 'Consolas', monospace; font-size: 14px; }
-        </style>
-    </head>
-    <body>
-        <div class="sidebar">
-            <h3>Файлы проекта</h3>
-            {% for file in files %}
-                <a href="#file-{{ loop.index }}">{{ file.path }}</a>
-            {% endfor %}
-        </div>
-        <div class="content">
-            <h1>Проект: {{ project_name }}</h1>
-            {% for file in files %}
-                <div class="file-block" id="file-{{ loop.index }}">
-                    <div class="file-header">{{ file.path }}</div>
-                    <pre>{{ file.content | e }}</pre>
-                </div>
-            {% endfor %}
-        </div>
-    </body>
-    </html>
-    """
+    _HANDLERS = {
+        ConsolidationMethod.MARKDOWN: MarkdownHandler(),
+        ConsolidationMethod.PLAIN_TEXT: PlainTextHandler(),
+        ConsolidationMethod.JSON: JSONHandler(),
+        ConsolidationMethod.HTML: HTMLHandler(),
+        ConsolidationMethod.PDF: PDFHandler(),
+    }
 
     def __init__(
         self, 
@@ -73,15 +45,6 @@ class FileAggregator:
         allowed_extensions: Optional[List[str]] = None,
         compress_code: bool = False
     ) -> None:
-        """Инициализирует экземпляр FileAggregator.
-
-        Args:
-            target_dir (str | Path): Путь к целевой директории.
-            method (ConsolidationMethod): Метод форматирования.
-            ignore_dirs (Optional[set[str]]): Пользовательские исключения директорий.
-            allowed_extensions (Optional[List[str]]): Разрешенные расширения.
-            compress_code (bool): Флаг включения безопасного сжатия (удаление пустых строк).
-        """
         self.target_dir = Path(target_dir).resolve()
         self.method = method
         self.ignore_dirs = ignore_dirs if ignore_dirs is not None else self.DEFAULT_IGNORE_DIRS
@@ -99,15 +62,6 @@ class FileAggregator:
 
     @staticmethod
     def count_tokens(text: str, model: str = "gpt-4o") -> int:
-        """Вычисляет количество токенов в тексте для указанной LLM модели.
-
-        Args:
-            text (str): Входной текст для анализа.
-            model (str): Название модели OpenAI (по умолчанию gpt-4o).
-
-        Returns:
-            int: Количество токенов. Возвращает 0 в случае непредвиденной ошибки.
-        """
         try:
             encoding = tiktoken.encoding_for_model(model)
             return len(encoding.encode(text))
@@ -141,114 +95,22 @@ class FileAggregator:
         return sorted(gathered_files)
 
     def _process_content(self, file_path: Path) -> str:
-        """Читает файл и применяет сжатие, если оно включено."""
+        """Безопасно читает файл и применяет сжатие, если включено."""
         content = file_path.read_text(encoding='utf-8')
         if self.compress_code:
-            # Оставляем только непустые строки, удаляя пробелы справа
             lines = [line.rstrip() for line in content.splitlines() if line.strip()]
             content = "\n".join(lines)
         return content
 
-    def _format_markdown(self, files: List[Path]) -> str:
-        output = [f"# Агрегация проекта: {self.target_dir.name}\n"]
-        for file_path in files:
-            relative_path = file_path.relative_to(self.target_dir)
-            output.append(f"## Файл: {relative_path}")
-            output.append(f"```{file_path.suffix.lstrip('.')}")
-            try:
-                output.append(self._process_content(file_path))
-            except Exception as e:
-                output.append(f"[Ошибка чтения файла: {e}]")
-            output.append("```\n")
-        return "\n".join(output)
-
-    def _format_plain_text(self, files: List[Path]) -> str:
-        separator = "=" * 60
-        output = [f"ПРОЕКТ: {self.target_dir.name}\n{separator}\n"]
-        for file_path in files:
-            relative_path = file_path.relative_to(self.target_dir)
-            output.append(f"--- НАЧАЛО ФАЙЛА: {relative_path} ---")
-            try:
-                output.append(self._process_content(file_path))
-            except Exception as e:
-                output.append(f"[Ошибка чтения файла: {e}]")
-            output.append(f"--- КОНЕЦ ФАЙЛА: {relative_path} ---\n")
-        return "\n".join(output)
-
-    def _format_json(self, files: List[Path]) -> str:
-        data: Dict[str, Any] = {"project_name": self.target_dir.name, "files": []}
-        for file_path in files:
-            relative_path = str(file_path.relative_to(self.target_dir))
-            try:
-                content = self._process_content(file_path)
-                status = "success"
-            except Exception as e:
-                content = str(e)
-                status = "error"
-            data["files"].append({
-                "path": relative_path, "extension": file_path.suffix, 
-                "status": status, "content": content
-            })
-        return json.dumps(data, ensure_ascii=False, indent=4)
-
-    def _format_html(self, files: List[Path]) -> str:
-        template = Template(self.HTML_TEMPLATE)
-        file_data = []
-        for file_path in files:
-            relative_path = str(file_path.relative_to(self.target_dir))
-            try:
-                content = self._process_content(file_path)
-            except Exception as e:
-                content = f"[Ошибка чтения: {e}]"
-            file_data.append({"path": relative_path, "content": content})
-        return template.render(project_name=self.target_dir.name, files=file_data)
-
-    def _ensure_pdf_font(self) -> Path:
-        """Обеспечивает наличие шрифта с поддержкой кириллицы (UTF-8).
-        Сохраняет шрифт в системную директорию разработки assets/.
-        """
-        font_path = Path("assets") / "Roboto-Regular.ttf"
-        font_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        if not font_path.exists():
-            font_url = "https://github.com/googlefonts/roboto/raw/main/src/hinted/Roboto-Regular.ttf"
-            urllib.request.urlretrieve(font_url, font_path)
-        return font_path
-
-    def _format_pdf(self, files: List[Path]) -> bytes:
-        font_path = self._ensure_pdf_font()
-        pdf = FPDF()
-        pdf.add_font("Roboto", "", str(font_path), uni=True)
-        pdf.set_auto_page_break(auto=True, margin=15)
-        pdf.add_page()
-        pdf.set_font("Roboto", size=14)
-        pdf.cell(0, 10, f"Проект: {self.target_dir.name}", ln=True, align='C')
-        pdf.ln(10)
-        
-        pdf.set_font("Roboto", size=10)
-        for file_path in files:
-            relative_path = str(file_path.relative_to(self.target_dir))
-            pdf.set_font("Roboto", size=12)
-            pdf.cell(0, 10, f"--- {relative_path} ---", ln=True, fill=False)
-            pdf.set_font("Roboto", size=8)
-            try:
-                content = self._process_content(file_path)
-            except Exception as e:
-                content = f"[Ошибка чтения: {e}]"
-            pdf.multi_cell(0, 5, content)
-            pdf.ln(5)
-        return bytes(pdf.output())
-
     def aggregate(self) -> Union[str, bytes]:
+        """Точка входа. Собирает файлы и передает их в обработчик формата."""
         if not self.target_dir.exists() or not self.target_dir.is_dir():
             raise ValueError(f"Директория не найдена: {self.target_dir}")
 
         files = self._gather_files()
+        handler = self._HANDLERS.get(self.method)
         
-        match self.method:
-            case ConsolidationMethod.MARKDOWN: return self._format_markdown(files)
-            case ConsolidationMethod.PLAIN_TEXT: return self._format_plain_text(files)
-            case ConsolidationMethod.JSON: return self._format_json(files)
-            case ConsolidationMethod.HTML: return self._format_html(files)
-            case ConsolidationMethod.PDF: return self._format_pdf(files)
-            case _: raise NotImplementedError(f"Метод {self.method} не поддерживается.")
+        if not handler:
+            raise NotImplementedError(f"Обработчик для метода {self.method} не реализован.")
+            
+        return handler.generate(self.target_dir, files, self._process_content)
