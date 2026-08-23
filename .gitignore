@@ -68,3 +68,6 @@ tempCodeRunnerFile.py
 # Project-specific: flat storage directory for non-development files
 # (mandatory separate folder, no nested subdirectories)
 extra_assets/
+
+# Логи приложения
+logs/

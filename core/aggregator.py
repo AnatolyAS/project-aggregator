@@ -4,8 +4,8 @@ from typing import List, Optional, Union
 
 import pathspec
 import tiktoken
+from loguru import logger # НОВЫЙ ИМПОРТ
 
-# Импорт независимых обработчиков из утвержденной директории
 from core.format_handlers import (
     MarkdownHandler, PlainTextHandler, 
     JSONHandler, HTMLHandler, PDFHandler
@@ -22,10 +22,7 @@ class ConsolidationMethod(Enum):
 
 
 class FileAggregator:
-    """Ядро агрегации (Контекст).
-    
-    Обеспечивает обход директорий и маршрутизацию данных в классы-обработчики.
-    """
+    """Ядро агрегации (Контекст)."""
 
     DEFAULT_IGNORE_DIRS = {'.git', '.venv', 'venv', '__pycache__', '.vscode', '.idea'}
 
@@ -50,11 +47,14 @@ class FileAggregator:
         self.ignore_dirs = ignore_dirs if ignore_dirs is not None else self.DEFAULT_IGNORE_DIRS
         self.compress_code = compress_code
         
+        logger.info(f"Инициализация Ядра. Цель: {self.target_dir}, Метод: {self.method.value}, Сжатие: {self.compress_code}")
+
         if allowed_extensions:
             self.allowed_extensions = {
                 ext.lower() if ext.startswith('.') else f'.{ext.lower()}' 
                 for ext in allowed_extensions
             }
+            logger.debug(f"Установлен фильтр расширений: {self.allowed_extensions}")
         else:
             self.allowed_extensions = None
 
@@ -65,14 +65,22 @@ class FileAggregator:
         try:
             encoding = tiktoken.encoding_for_model(model)
             return len(encoding.encode(text))
-        except Exception:
+        except Exception as e:
+            logger.error(f"Ошибка при подсчете токенов (модель {model}): {e}")
             return 0
 
     def _load_gitignore(self) -> Optional[pathspec.PathSpec]:
         gitignore_path = self.target_dir / '.gitignore'
         if gitignore_path.is_file():
-            with open(gitignore_path, 'r', encoding='utf-8') as f:
-                return pathspec.PathSpec.from_lines('gitwildmatch', f)
+            try:
+                with open(gitignore_path, 'r', encoding='utf-8') as f:
+                    spec = pathspec.PathSpec.from_lines('gitwildmatch', f)
+                    logger.debug("Файл .gitignore успешно прочитан и скомпилирован.")
+                    return spec
+            except Exception as e:
+                logger.warning(f"Не удалось прочитать .gitignore: {e}")
+        else:
+            logger.debug("Файл .gitignore не обнаружен в целевой директории.")
         return None
 
     def _is_text_file(self, file_path: Path) -> bool:
@@ -81,9 +89,11 @@ class FileAggregator:
                 f.read(1024)
             return True
         except UnicodeDecodeError:
+            # Не логируем каждый бинарный файл, чтобы не засорять лог (уровень TRACE подошел бы лучше)
             return False
 
     def _gather_files(self) -> List[Path]:
+        logger.info("Начат обход файловой системы и фильтрация файлов...")
         gathered_files = []
         for file_path in self.target_dir.rglob('*'):
             if not file_path.is_file(): continue
@@ -92,10 +102,11 @@ class FileAggregator:
             if self.gitignore_spec and self.gitignore_spec.match_file(relative_path.as_posix()): continue
             if self.allowed_extensions and file_path.suffix.lower() not in self.allowed_extensions: continue
             if self._is_text_file(file_path): gathered_files.append(file_path)
+            
+        logger.info(f"Обход завершен. Валидных текстовых файлов собрано: {len(gathered_files)}")
         return sorted(gathered_files)
 
     def _process_content(self, file_path: Path) -> str:
-        """Безопасно читает файл и применяет сжатие, если включено."""
         content = file_path.read_text(encoding='utf-8')
         if self.compress_code:
             lines = [line.rstrip() for line in content.splitlines() if line.strip()]
@@ -103,14 +114,22 @@ class FileAggregator:
         return content
 
     def aggregate(self) -> Union[str, bytes]:
-        """Точка входа. Собирает файлы и передает их в обработчик формата."""
         if not self.target_dir.exists() or not self.target_dir.is_dir():
+            logger.error(f"Директория не найдена или недоступна: {self.target_dir}")
             raise ValueError(f"Директория не найдена: {self.target_dir}")
 
         files = self._gather_files()
         handler = self._HANDLERS.get(self.method)
         
         if not handler:
+            logger.error(f"Обработчик формата {self.method} отсутствует в маршрутизаторе.")
             raise NotImplementedError(f"Обработчик для метода {self.method} не реализован.")
             
-        return handler.generate(self.target_dir, files, self._process_content)
+        logger.info(f"Передача {len(files)} файлов в обработчик {handler.__class__.__name__}")
+        try:
+            result = handler.generate(self.target_dir, files, self._process_content)
+            logger.success("Генерация данных успешно завершена.")
+            return result
+        except Exception as e:
+            logger.exception("Критический сбой внутри обработчика формата!")
+            raise e
