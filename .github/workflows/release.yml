@@ -14,11 +14,12 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
+      # macOS удалена из матрицы сборки
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
+        os: [windows-latest, ubuntu-latest]
 
     steps:
-      - name: Извлечение исходного кода (Checkout)
+      - name: Извлечение исходного кода
         uses: actions/checkout@v4
 
       - name: Настройка среды Python 3.11
@@ -26,45 +27,32 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Установка менеджера зависимостей Poetry
+      - name: Установка Poetry
         run: |
           python -m pip install --upgrade pip
           pip install poetry
 
-      - name: Установка зависимостей проекта
+      - name: Установка зависимостей
         run: poetry install --no-interaction --no-root
 
-      - name: Компиляция для Windows (с иконкой .ico)
+      - name: Компиляция для Windows (псевдоним pa.exe)
         if: runner.os == 'Windows'
         run: |
-          if (Test-Path "assets\app_icon.ico") {
-            poetry run pyinstaller --onefile --windowed --name ProjectAggregator --icon=assets\app_icon.ico main.py
+          if (Test-Path "assets\windows.ico") {
+            poetry run pyinstaller --onefile --windowed --name pa --icon=assets\windows.ico main.py
           } else {
-            poetry run pyinstaller --onefile --windowed --name ProjectAggregator main.py
+            poetry run pyinstaller --onefile --windowed --name pa main.py
           }
 
-      - name: Компиляция для macOS (с иконкой .icns)
-        if: runner.os == 'macOS'
-        run: |
-          if [ -f "assets/app_icon.icns" ]; then
-            poetry run pyinstaller --onefile --windowed --name ProjectAggregator_macOS --icon=assets/app_icon.icns main.py
-          else
-            poetry run pyinstaller --onefile --windowed --name ProjectAggregator_macOS main.py
-          fi
-
-      - name: Компиляция для Linux (с иконкой .png)
+      - name: Компиляция для Linux (псевдоним pa)
         if: runner.os == 'Linux'
         run: |
-          if [ -f "assets/app_icon.png" ]; then
-            poetry run pyinstaller --onefile --windowed --name ProjectAggregator_Linux --icon=assets/app_icon.png main.py
-          else
-            poetry run pyinstaller --onefile --windowed --name ProjectAggregator_Linux main.py
-          fi
+          poetry run pyinstaller --onefile --windowed --name pa main.py
 
       - name: Автоматическая публикация файлов в GitHub Releases
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: dist/ProjectAggregator*
+          files: dist/pa*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
