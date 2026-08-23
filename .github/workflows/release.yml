@@ -14,9 +14,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
-      # macOS удалена из матрицы сборки
+      # Матрица сужена исключительно до ОС Windows
       matrix:
-        os: [windows-latest, ubuntu-latest]
+        os: [windows-latest]
 
     steps:
       - name: Извлечение исходного кода
@@ -36,18 +36,12 @@ jobs:
         run: poetry install --no-interaction --no-root
 
       - name: Компиляция для Windows (псевдоним pa.exe)
-        if: runner.os == 'Windows'
         run: |
           if (Test-Path "assets\windows.ico") {
             poetry run pyinstaller --onefile --windowed --name pa --icon=assets\windows.ico main.py
           } else {
             poetry run pyinstaller --onefile --windowed --name pa main.py
           }
-
-      - name: Компиляция для Linux (псевдоним pa)
-        if: runner.os == 'Linux'
-        run: |
-          poetry run pyinstaller --onefile --windowed --name pa main.py
 
       - name: Автоматическая публикация файлов в GitHub Releases
         uses: softprops/action-gh-release@v2

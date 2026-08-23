@@ -24,8 +24,9 @@ app = typer.Typer(
     add_completion=False,
 )
 
-@app.command()
-def aggregate(
+# НОВОЕ: Явное указание имени команды "start"
+@app.command(name="start")
+def start_command(
     target_dir: Optional[Path] = typer.Argument(
         None,
         help="Путь к директории проекта. Если не указан, запустится интерактивный режим.",
