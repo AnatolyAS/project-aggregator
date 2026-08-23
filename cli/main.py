@@ -2,14 +2,16 @@ import typer
 from pathlib import Path
 from typing import List, Optional
 
+import questionary
+from questionary import Style
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.theme import Theme
-from rich.prompt import Prompt, Confirm
 
 from core.aggregator import FileAggregator, ConsolidationMethod
 
+# Цветовая схема для Rich (панели и логи)
 custom_theme = Theme({
     "info": "cyan",
     "success": "bold green",
@@ -18,13 +20,23 @@ custom_theme = Theme({
 })
 
 console = Console(theme=custom_theme)
+
+# Кастомный стиль Questionary для полного соответствия GitHub CLI (gh)
+gh_cli_style = Style([
+    ('qmark', 'fg:green bold'),         # Зеленый знак вопроса '?'
+    ('question', 'bold'),               # Жирный текст вопроса
+    ('answer', 'fg:cyan'),              # Циановый цвет введенного ответа
+    ('pointer', 'fg:cyan bold'),        # Циановый курсор '>'
+    ('highlighted', 'fg:cyan bold'),    # Выделенный пункт меню
+    ('instruction', 'fg:darkgray'),     # Серый текст подсказки '[Use arrows...]'
+])
+
 app = typer.Typer(
     name="Project Aggregator CLI",
     help="Профессиональная утилита для консолидации файлов проекта.",
     add_completion=False,
 )
 
-# НОВОЕ: Явное указание имени команды "start"
 @app.command(name="start")
 def start_command(
     target_dir: Optional[Path] = typer.Argument(
@@ -52,36 +64,58 @@ def start_command(
         help="Включить сжатие кода.",
     )
 ) -> None:
-    """Выполняет процесс агрегации файлов."""
+    """Выполняет процесс агрегации файлов (интерактивный или автоматический режим)."""
     
-    # ИНТЕРАКТИВНЫЙ РЕЖИМ
+    # ИНТЕРАКТИВНЫЙ РЕЖИМ (Стиль GitHub CLI)
     if target_dir is None:
-        console.print("[info]Запуск интерактивного режима настройки...[/info]\n")
+        console.print("\n") # Отступ для красоты
         
-        target_dir_str = Prompt.ask("[bold cyan]? Target directory[/bold cyan] (Целевая папка)")
+        target_dir_str = questionary.path(
+            "Target directory (целевая папка):",
+            style=gh_cli_style
+        ).ask()
+        
+        # Если пользователь нажал Ctrl+C
+        if target_dir_str is None:
+            raise typer.Exit()
+            
         target_dir = Path(target_dir_str).resolve()
         
-        method_str = Prompt.ask(
-            "[bold cyan]? Consolidation method[/bold cyan] (Метод вывода)",
+        method_str = questionary.select(
+            "Consolidation method (метод вывода):",
             choices=[m.value for m in ConsolidationMethod],
-            default=ConsolidationMethod.MARKDOWN.value
-        )
+            instruction="(Use arrows to move, type to filter)",
+            style=gh_cli_style
+        ).ask()
+        if method_str is None: raise typer.Exit()
         method = ConsolidationMethod(method_str)
         
-        ext_str = Prompt.ask("[bold cyan]? Extensions[/bold cyan] (Расширения через запятую, Enter для всех)", default="")
+        ext_str = questionary.text(
+            "Extensions (расширения через запятую, оставьте пустым для всех):",
+            style=gh_cli_style
+        ).ask()
+        if ext_str is None: raise typer.Exit()
+        
         if ext_str.strip():
             extensions = [e.strip() for e in ext_str.split(',')]
             
-        compress = Confirm.ask("[bold cyan]? Compress code[/bold cyan] (Оптимизировать для LLM?)", default=False)
+        compress = questionary.confirm(
+            "Compress code (оптимизировать код для LLM)?",
+            default=False,
+            style=gh_cli_style
+        ).ask()
+        if compress is None: raise typer.Exit()
         
-        out_str = Prompt.ask(
-            "[bold cyan]? Output file[/bold cyan] (Файл сохранения)", 
-            default="aggregated_output.md"
-        )
+        out_str = questionary.text(
+            "Output file (файл сохранения):", 
+            default="aggregated_output.md",
+            style=gh_cli_style
+        ).ask()
+        if out_str is None: raise typer.Exit()
         output_file = Path(out_str)
         console.print("\n")
 
-    # Автоматическая корректировка расширения файла по умолчанию
+    # Автоматическая корректировка расширения файла
     if output_file.name == "aggregated_output.md":
         ext_map = {
             ConsolidationMethod.MARKDOWN: ".md",
@@ -92,6 +126,7 @@ def start_command(
         }
         output_file = output_file.with_suffix(ext_map.get(method, ".md"))
 
+    # Добавление суффикса при сжатии
     if compress and not output_file.stem.endswith("_compressed"):
         output_file = output_file.with_name(f"{output_file.stem}_compressed{output_file.suffix}")
 
